@@ -150,6 +150,7 @@ class Changelog:
         r"%ce%n"  # committer email
         r"%cd%n"  # committer date
         r"%D%n"  # tag
+        r"%P%n"  # parent hashes
         r"%s%n"  # subject
         r"%b%n" + MARKER  # body
     )
@@ -320,7 +321,7 @@ class Changelog:
         pos = 0
         while pos < size:
             # build body
-            nbl_index = 9
+            nbl_index = 10
             body = []
             while lines[pos + nbl_index] != self.MARKER:
                 body.append(lines[pos + nbl_index].strip("\r"))
@@ -336,7 +337,8 @@ class Changelog:
                 committer_email=lines[pos + 5],
                 committer_date=lines[pos + 6],
                 refs=lines[pos + 7],
-                subject=lines[pos + 8],
+                parent_hashes=lines[pos + 8],
+                subject=lines[pos + 9],
                 body=body,
                 parse_trailers=self.parse_trailers,
             )
@@ -360,30 +362,43 @@ class Changelog:
         return commits
 
     def _group_commits_by_version(self) -> tuple[list[Version], dict[str, Version]]:
-        version = None
         next_version = None
         versions_dict = {}
         versions_list = []
+        versions_hashes = {}
         for commit in self.commits:
-            if not version or commit.version:
+            tag = ""
+            # Find version that this commit is an ancestor of. If it the commit is reachable from more than one version, use the oldest version
+            for version_tag, hashes in versions_hashes.items():
+                if commit.hash in hashes:
+                    tag = version_tag
+                    hashes.remove(commit.hash)
+            
+            if tag not in versions_dict or commit.version:
+                next_version = versions_dict[tag] if tag in versions_dict else None
                 version = self._create_version(commit, next_version)
                 versions_dict[commit.version] = version
                 versions_list.append(version)
-                next_version = version
+                versions_hashes[commit.version] = []
             else:
-                commit.version = version.tag
+                commit.version = tag
+
+            version = versions_dict[commit.version]
             version.commits.append(commit)
+            versions_hashes[commit.version].extend(commit.parent_hashes)
+
             _type = commit.convention["type"]
             if "type" in commit.convention and _type not in version.sections_dict:
                 section = Section(section_type=_type)
                 version.sections_list.append(section)
                 version.sections_dict[_type] = section
             version.sections_dict[_type].commits.append(commit)
-        if next_version is not None and self.provider:
-            next_version.compare_url = self.provider.get_compare_url(
-                base=versions_list[-1].commits[-1].hash,
-                target=next_version.tag or "HEAD",
-            )
+        for version in versions_list:
+            if not version.previous_version:
+                version.compare_url = self.provider.get_compare_url(
+                    base=version.commits[-1].hash,
+                    target=version.tag or "HEAD",
+                )
         return versions_list, versions_dict
 
     def _create_version(self, commit: Commit, next_version: Version | None) -> Version:
