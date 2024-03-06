@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 import shutil
 import subprocess
+from time import sleep
 import uuid
 from typing import TYPE_CHECKING, Iterator
 
@@ -29,11 +30,10 @@ class GitRepo:
             repo: Path to the git repository.
         """
         self.path = repo
-        self._git("init")
+        self._git("init", "-b", "main")
         self._git("config", "user.name", "dummy")
         self._git("config", "user.email", "dummy@example.com")
         self._git("remote", "add", "origin", "git@github.com:example/example")
-        self.commit("chore: Initial repository creation")
 
     def commit(self, message: str) -> str:
         """Create, add and commit a new file into the git repository.
@@ -48,7 +48,21 @@ class GitRepo:
             fh.write(str(random.randint(0, 1)))  # noqa: S311
         self._git("add", "-A")
         self._git("commit", "-m", message)
-        return self._git("rev-parse", "HEAD")
+        #sleep(1)
+        return self._git("rev-parse", "HEAD").rstrip()
+    
+    def tag(self, tagname: str) -> None:
+        self._git("tag", tagname)
+
+    def branch(self, branchname: str) -> None:
+        self._git("branch", branchname)
+    
+    def checkout(self, branchname: str) -> None:
+        self._git("checkout", branchname)
+    
+    def merge(self, branchname: str) -> str:
+        self._git("merge", "--no-ff", "--commit", "-m", f"merge: Merge branch '{branchname}'", branchname)
+        return self._git("rev-parse", "HEAD").rstrip()
 
     def _git(self, *args: str) -> str:
         return subprocess.check_output(
@@ -81,8 +95,70 @@ def test_bump_with_semver_on_new_repo(repo: GitRepo, bump: str, expected: str) -
     Parameters:
         repo: GitRepo to a temporary repository.
     """
+    repo.commit("chore: Initial repository creation")
     changelog = Changelog(repo.path, convention=AngularConvention, bump=bump)
 
     assert len(changelog.versions_list) == 1
     tag = changelog.versions_list[0].tag
     assert tag == expected
+
+def test_one_release_branch(repo: GitRepo) -> None:
+    """Test parsing and grouping commits to versions.
+
+                       1.0.0
+                         |
+    main       A---B-----M
+                \       /
+    develop      ------C
+
+    Parameters:
+        repo: GitRepo to a temporary repository.
+    """
+    commit_a = repo.commit("fix: A")
+    repo.branch("develop")
+    commit_b = repo.commit("fix: B")
+    repo.checkout("develop")
+    commit_c = repo.commit("feat: C")
+    repo.checkout("main")
+    commit_m = repo.merge("develop")
+    repo.tag("1.0.0")
+
+    changelog = Changelog(repo.path, convention=AngularConvention)
+
+    assert len(changelog.versions_list) == 1
+    version = changelog.versions_list[0]
+    assert version.tag == "0.1.0"
+    hashes = sorted([commit.hash for commit in version.commits])
+    assert hashes == sorted([commit_m, commit_c, commit_b, commit_a])
+
+def test_two_release_branches(repo: GitRepo) -> None:
+    """Test parsing and grouping commits to versions.
+
+                       1.0.0
+                         |
+    main       A---B-----M
+                \       /
+    develop      ------C
+                       |
+                     2.0.0
+
+    Parameters:
+        repo: GitRepo to a temporary repository.
+    """
+    commit_a = repo.commit("fix: A")
+    repo.branch("develop")
+    commit_b = repo.commit("fix: B")
+    repo.checkout("develop")
+    commit_c = repo.commit("feat: C")
+    repo.tag("2.0.0")
+    repo.checkout("main")
+    commit_m = repo.merge("develop")
+    repo.tag("1.0.0")
+
+    changelog = Changelog(repo.path, convention=AngularConvention)
+
+    assert len(changelog.versions_list) == 2
+    version = changelog.versions_list[0]
+    assert version.tag == "1.0.0"
+    hashes = sorted([commit.hash for commit in version.commits])
+    assert hashes == sorted([commit_m, commit_a])
