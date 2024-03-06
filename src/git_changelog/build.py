@@ -52,6 +52,7 @@ def bump(version: str, part: Literal["major", "minor", "patch"] = "patch", *, ze
         semver_version = semver_version.bump_patch()
     return prefix + str(semver_version)
 
+
 class Section:
     """A list of commits grouped by section_type."""
 
@@ -363,9 +364,9 @@ class Changelog:
 
     def _group_commits_by_version(self) -> tuple[list[Version], dict[str, Version]]:
         next_version = None
-        versions_dict = {}
-        versions_list = []
-        versions_hashes = {}
+        versions_dict: dict[str, Version] = {}
+        versions_list: list[Version] = []
+        versions_hashes: dict[str, list[str]] = {}
         for commit in self.commits:
             tag = ""
             # Find version that this commit is an ancestor of. If it the commit is reachable from more than one version, use the oldest version
@@ -373,9 +374,9 @@ class Changelog:
                 if commit.hash in hashes:
                     tag = version_tag
                     hashes.remove(commit.hash)
-            
+
             if tag not in versions_dict or commit.version:
-                next_version = versions_dict[tag] if tag in versions_dict else None
+                next_version = versions_dict.get(tag)
                 version = self._create_version(commit, next_version)
                 versions_dict[commit.version] = version
                 versions_list.append(version)
@@ -394,7 +395,7 @@ class Changelog:
                 version.sections_dict[_type] = section
             version.sections_dict[_type].commits.append(commit)
         for version in versions_list:
-            if not version.previous_version:
+            if not version.previous_version and self.provider:
                 version.compare_url = self.provider.get_compare_url(
                     base=version.commits[-1].hash,
                     target=version.tag or "HEAD",
@@ -402,7 +403,7 @@ class Changelog:
         return versions_list, versions_dict
 
     def _create_version(self, commit: Commit, next_version: Version | None) -> Version:
-        date = commit.committer_date.date() if commit.version else datetime.date.today()
+        date = commit.committer_date.date() if commit.version else datetime.date.today()  # noqa: DTZ011
         version = Version(tag=commit.version, date=date)
         if self.provider:
             version.url = self.provider.get_tag_url(tag=commit.version)
