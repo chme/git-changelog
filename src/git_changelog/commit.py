@@ -90,6 +90,7 @@ class Commit:
             self.parent_hashes = parent_hashes.split(" ")
         else:
             self.parent_hashes = parent_hashes
+        self.parent_commits: list[Commit] = []
 
         self.text_refs: dict[str, list[Ref]] = {}
         self.convention: dict[str, Any] = {}

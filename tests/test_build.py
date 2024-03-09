@@ -5,7 +5,6 @@ from __future__ import annotations
 import random
 import shutil
 import subprocess
-from time import sleep
 import uuid
 from typing import TYPE_CHECKING, Iterator
 
@@ -48,18 +47,18 @@ class GitRepo:
             fh.write(str(random.randint(0, 1)))  # noqa: S311
         self._git("add", "-A")
         self._git("commit", "-m", message)
-        #sleep(1)
+        # sleep(1)
         return self._git("rev-parse", "HEAD").rstrip()
-    
+
     def tag(self, tagname: str) -> None:
         self._git("tag", tagname)
 
     def branch(self, branchname: str) -> None:
         self._git("branch", branchname)
-    
+
     def checkout(self, branchname: str) -> None:
         self._git("checkout", branchname)
-    
+
     def merge(self, branchname: str) -> str:
         self._git("merge", "--no-ff", "--commit", "-m", f"merge: Merge branch '{branchname}'", branchname)
         return self._git("rev-parse", "HEAD").rstrip()
@@ -102,14 +101,19 @@ def test_bump_with_semver_on_new_repo(repo: GitRepo, bump: str, expected: str) -
     tag = changelog.versions_list[0].tag
     assert tag == expected
 
-def test_one_release_branch(repo: GitRepo) -> None:
-    """Test parsing and grouping commits to versions.
 
-                       1.0.0
-                         |
-    main       A---B-----M
-                \       /
-    develop      ------C
+def test_one_release_branch_with_feat_branch(repo: GitRepo) -> None:
+    r"""Test parsing and grouping commits to versions.
+
+    Commit graph:
+                   1.0.0
+                     |
+    main       A-B---D
+                \   /
+    feat         --C
+
+    Expected:
+    - 1.0.0: D B C A
 
     Parameters:
         repo: GitRepo to a temporary repository.
@@ -120,27 +124,33 @@ def test_one_release_branch(repo: GitRepo) -> None:
     repo.checkout("develop")
     commit_c = repo.commit("feat: C")
     repo.checkout("main")
-    commit_m = repo.merge("develop")
+    commit_d = repo.merge("develop")
     repo.tag("1.0.0")
 
     changelog = Changelog(repo.path, convention=AngularConvention)
 
     assert len(changelog.versions_list) == 1
     version = changelog.versions_list[0]
-    assert version.tag == "0.1.0"
-    hashes = sorted([commit.hash for commit in version.commits])
-    assert hashes == sorted([commit_m, commit_c, commit_b, commit_a])
+    assert version.tag == "0.1.0"    # TODO  Bug! The tag verion is ignored!
+    assert len(version.commits) == 4
+    hashes = [commit.hash for commit in version.commits]
+    assert hashes == [commit_d, commit_b, commit_c, commit_a]
 
-def test_two_release_branches(repo: GitRepo) -> None:
-    """Test parsing and grouping commits to versions.
 
-                       1.0.0
-                         |
-    main       A---B-----M
-                \       /
-    develop      ------C
-                       |
-                     2.0.0
+def test_one_release_branch_with_two_versions(repo: GitRepo) -> None:
+    r"""Test parsing and grouping commits to versions.
+
+    Commit graph:
+                   1.1.0
+               1.0.0 |
+                 |   |
+    main       A-B---D
+                \   /
+    feat         --C
+
+    Expected:
+    - 1.1.0: D C
+    - 1.0.0: B A
 
     Parameters:
         repo: GitRepo to a temporary repository.
@@ -148,17 +158,22 @@ def test_two_release_branches(repo: GitRepo) -> None:
     commit_a = repo.commit("fix: A")
     repo.branch("develop")
     commit_b = repo.commit("fix: B")
+    repo.tag("1.0.0")
     repo.checkout("develop")
     commit_c = repo.commit("feat: C")
-    repo.tag("2.0.0")
     repo.checkout("main")
-    commit_m = repo.merge("develop")
-    repo.tag("1.0.0")
+    commit_d = repo.merge("develop")
+    repo.tag("1.1.0")
 
     changelog = Changelog(repo.path, convention=AngularConvention)
 
     assert len(changelog.versions_list) == 2
     version = changelog.versions_list[0]
+    assert version.tag == "1.1.0"
+    hashes = [commit.hash for commit in version.commits]
+    assert hashes == [commit_d, commit_c]
+
+    version = changelog.versions_list[1]
     assert version.tag == "1.0.0"
-    hashes = sorted([commit.hash for commit in version.commits])
-    assert hashes == sorted([commit_m, commit_a])
+    hashes = [commit.hash for commit in version.commits]
+    assert hashes == [commit_b, commit_a]
